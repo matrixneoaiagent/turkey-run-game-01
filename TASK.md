@@ -66,3 +66,15 @@ Controls: ...
 - No unrelated work, no network fetches of code.
 
 Work efficiently: a complete, polished, funny game with four strong screenshots matters more than extra features. Finish within about two to three hours.
+
+## Environment (exact paths)
+
+- Python Playwright: `/home/kozak/AI/crypto-wallet/.venv/bin/python` — this interpreter has `playwright`; system `python3` does not.
+  ```python
+  from playwright.sync_api import sync_playwright
+  with sync_playwright() as p:
+      b = p.chromium.launch(headless=True, executable_path="/home/kozak/.local/bin/chromium",
+                            args=["--no-sandbox","--disable-dev-shm-usage"])
+  ```
+- Node Playwright-core (alternative): `NODE_PATH=/tmp/opencode/pw_tool/node_modules node script.mjs`; Chromium `/home/kozak/.local/bin/chromium`.
+- Serve: `cd /tmp/opencode/turkey_build && node serve.ts` (port 8080).
