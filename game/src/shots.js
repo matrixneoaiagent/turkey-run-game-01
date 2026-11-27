@@ -1,79 +1,127 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// turkey could move, keep clear of knives, chase the lowest corn when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_KNIFE } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Deterministic staged scenes for the four screenshots, selected with ?shot=title|run|chase|end
+// (the old starter names start/play also work). A scene is built from the real world state and
+// drawn by the real renderer; nothing is composited afterwards.
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the knives speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the turkey and a knife. */
-const MARGIN = 10;
+import { DISTANCE, FIELD, PLAYER, SCREENS } from './config.js';
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the turkey into a knife; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_KNIFE) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
-}
-
-/** Of the safe ways to move, the one toward the lowest corn (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let corn = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_KNIFE && (corn === null || item.y > corn.y)) corn = item;
-  }
-  const target = corn === null ? FIELD.width / 2 : corn.x + corn.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
-}
-
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
+function clearRun(world) {
   world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+  world.state.time = 9.2;
+  world.state.player.anim = 34;
+}
+
+function addRunningParticles(world) {
+  const s = world.state;
+  world.emit('dust', FIELD.playerX - 22, FIELD.groundY - 2, 6, {
+    vx: -55,
+    vy: -14,
+    spread: 70,
+    size: 5,
+    sizeJitter: 7,
+    life: 0.6,
+    color: 'rgba(196, 158, 117, 0.75)',
+  });
+  world.emit('feather', FIELD.playerX - 20, FIELD.groundY - 58, 4, {
+    vx: -38,
+    vy: -20,
+    spread: 40,
+    size: 2,
+    sizeJitter: 3,
+    life: 1.3,
+    color: '#e4a45d',
+  });
+}
+
+function stageTitle(world) {
+  world.reset();
+  world.state.time = 7.4;
+  world.state.distancePx = 380;
+  world.state.player.anim = 27;
+  return { screen: SCREENS.title, best: 0, newBest: false };
+}
+
+function stageRun(world) {
+  clearRun(world);
+  world.jumpToDistance(142);
+  const s = world.state;
+  s.score = 1180;
+  s.gap = 205;
+  s.lives = 3;
+  s.distanceM = 142;
+  s.player.anim = 39;
+  s.time = 10.6;
+  // The oven ahead, a tall fence further on, and an arc of corn to pull the eye forward.
+  world.placeHazard('oven', 795);
+  world.placeHazard('fence', 1080);
+  world.placeHazard('hay', 1188);
+  world.placePickup('corn', 660, FIELD.groundY - 156);
+  world.placePickup('corn', 714, FIELD.groundY - 204);
+  world.placePickup('corn', 768, FIELD.groundY - 156);
+  addRunningParticles(world);
+  return { screen: SCREENS.play, best: 2860, newBest: false };
+}
+
+function stageChase(world) {
+  clearRun(world);
+  world.jumpToDistance(238);
+  const s = world.state;
+  s.score = 2040;
+  s.gap = 78;
+  s.lives = 2;
+  s.distanceM = 238;
+  s.player.ducking = true;
+  s.player.onGround = true;
+  s.player.feetY = FIELD.groundY;
+  s.player.anim = 52;
+  s.speed = PLAYER.duckSpeed;
+  s.time = 18.6;
+  // A carving knife at head height, the farmer right behind, dust from the slide.
+  world.placeHazard('knife', 585);
+  world.placeHazard('oven', 1030);
+  world.placePickup('feather', 895, FIELD.groundY - 132);
+  world.emit('dust', FIELD.playerX - 38, FIELD.groundY - 2, 12, {
+    vx: -95,
+    vy: -26,
+    spread: 100,
+    size: 5,
+    sizeJitter: 8,
+    life: 0.7,
+    color: 'rgba(205, 167, 126, 0.8)',
+  });
+  world.addPopup("HE'S CLOSE!", FIELD.playerX + 4, FIELD.groundY - 232, '#ff8a70', 26);
+  return { screen: SCREENS.play, best: 2860, newBest: false };
+}
+
+function stageEnd(world) {
+  clearRun(world);
+  world.jumpToDistance(DISTANCE.escapeMetres);
+  const s = world.state;
+  s.score = 4280;
+  s.distanceM = DISTANCE.escapeMetres;
+  s.lives = 2;
+  s.gap = 176;
+  s.time = 41.5;
+  s.outcome = 'escaped';
+  s.cause = 'escape';
+  s.player.anim = 44;
+  s.speed = PLAYER.runSpeed;
+  world.celebrate();
+  return { screen: SCREENS.end, best: 0, newBest: true };
+}
+
+export function stageShot(name, world) {
+  switch (name) {
+    case 'run':
+    case 'play':
+      return stageRun(world);
+    case 'chase':
+      return stageChase(world);
+    case 'end':
+    case 'escape':
+      return stageEnd(world);
+    case 'title':
+    case 'start':
+    default:
+      return stageTitle(world);
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
 }

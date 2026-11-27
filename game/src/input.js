@@ -1,53 +1,83 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Keyboard handling. One-shot actions (confirm, pause, mute) are queued; jump presses and
+// releases are edge events so the world can start a jump buffer and cut a jump short; ducking is
+// a held state. Keys are followed by code rather than character, so layouts do not matter.
 
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
+export const ACTION_MUTE = 4;
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+const JUMP_CODES = new Set(['Space', 'ArrowUp', 'KeyW']);
+const DUCK_CODES = new Set(['ArrowDown', 'KeyS']);
+const CONFIRM_CODES = new Set(['Enter', 'NumpadEnter', 'Space']);
+const PAUSE_CODES = new Set(['KeyP', 'Escape']);
+const MUTE_CODES = new Set(['KeyM']);
 
 export function createInput(target) {
-  let left = false;
-  let right = false;
+  const jumpKeys = new Set();
+  let duckHeld = false;
   let actions = 0;
+  let jumpPressed = false;
+  let jumpReleased = false;
 
   window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
+    let handled = true;
+    if (JUMP_CODES.has(event.code)) {
+      if (!jumpKeys.has(event.code)) {
+        jumpKeys.add(event.code);
+        if (jumpKeys.size === 1) jumpPressed = true;
+      }
+      if (CONFIRM_CODES.has(event.code) && !event.repeat) actions |= ACTION_CONFIRM;
+    } else if (DUCK_CODES.has(event.code)) {
+      duckHeld = true;
+    } else if (CONFIRM_CODES.has(event.code)) {
       if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
+    } else if (PAUSE_CODES.has(event.code)) {
       if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
+    } else if (MUTE_CODES.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_MUTE;
+    } else {
+      handled = false;
+    }
+    if (handled) event.preventDefault();
   });
+
   window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
+    if (JUMP_CODES.has(event.code)) {
+      jumpKeys.delete(event.code);
+      if (jumpKeys.size === 0) jumpReleased = true;
+      event.preventDefault();
+    } else if (DUCK_CODES.has(event.code)) {
+      duckHeld = false;
+      event.preventDefault();
+    }
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
+
+  // A key released while the tab loses focus never sends keyup. Let go of everything instead.
   window.addEventListener('blur', () => {
-    left = false;
-    right = false;
+    jumpKeys.clear();
+    duckHeld = false;
+    jumpPressed = false;
+    jumpReleased = true;
   });
   target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
+    // Creating/resuming the audio context needs a user gesture; the main loop does it too.
   });
 
   return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
+    consume() {
+      const frame = { actions, jumpPressed, jumpReleased, duck: duckHeld };
       actions = 0;
-      return taken;
+      jumpPressed = false;
+      jumpReleased = false;
+      return frame;
+    },
+    /** Forget a jump that started the game, so the title does not launch the turkey immediately. */
+    clearJump() {
+      jumpPressed = false;
+      jumpReleased = true;
+    },
+    ducking() {
+      return duckHeld;
     },
   };
 }
